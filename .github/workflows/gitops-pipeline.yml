@@ -60,9 +60,9 @@ jobs:
 
       - name: Install Terragrunt Binary
         run: |
-          curl -SLs https://github.com/gruntwork-io/terragrunt/releases/download/v0.55.0/terragrunt_linux_amd64 -o terragrunt
-          chmod +x terragrunt
-          sudo mv terragrunt /usr/local/bin/terragrunt
+          curl -SLs https://github.com/gruntwork-io/terragrunt/releases/download/v0.55.0/terragrunt_linux_amd64 -o /tmp/terragrunt
+          chmod +x /tmp/terragrunt
+          sudo mv /tmp/terragrunt /usr/local/bin/terragrunt
           terragrunt --version
 
       # ==============================================================================
