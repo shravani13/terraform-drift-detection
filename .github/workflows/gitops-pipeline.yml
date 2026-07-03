@@ -58,10 +58,12 @@ jobs:
           terraform_version: "1.7.0"
           terraform_wrapper: false
 
-      - name: Setup Terragrunt Wrapper
-        uses: alpine-github-actions/terragrunt@v1.4.1
-        with:
-          terragrunt_version: "v0.55.0"
+      - name: Install Terragrunt Binary
+        run: |
+          curl -SLs https://github.com/gruntwork-io/terragrunt/releases/download/v0.55.0/terragrunt_linux_amd64 -o terragrunt
+          chmod +x terragrunt
+          sudo mv terragrunt /usr/local/bin/terragrunt
+          terragrunt --version
 
       # ==============================================================================
       # SECURE MULTI-ACCOUNT ACCESS DELEGATION (OIDC)
