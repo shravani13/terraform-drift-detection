@@ -12,7 +12,7 @@ on:
     paths:
       - 'terragrunt/environments/**'
   schedule:
-    - cron: "0 * * * *" # Automated Drift Detection Engine: Runs every hour, 24/7
+    - cron: "/5 * * * *" # Automated Drift Detection Engine: Runs every hour, 24/7
 
 permissions:
   id-token: write # Mandatory for acquiring short-lived AWS session keys via OIDC
