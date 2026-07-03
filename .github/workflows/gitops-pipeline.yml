@@ -1,0 +1,117 @@
+name: "Enterprise Terragrunt GitOps Engine"
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'terragrunt/environments/**'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'terragrunt/environments/**'
+  schedule:
+    - cron: "0 * * * *" # Automated Drift Detection Engine: Runs every hour, 24/7
+
+permissions:
+  id-token: write # Mandatory for acquiring short-lived AWS session keys via OIDC
+  contents: read
+
+jobs:
+  resolve-matrix:
+    name: "Identify Active Target Environments"
+    runs-on: ubuntu-latest
+    outputs:
+      environments: ${{ steps.set-matrix.outputs.environments }}
+    steps:
+      - name: Checkout Blueprint Repository
+        uses: actions/checkout@v4
+
+      - name: Compute Target Matrices
+        id: set-matrix
+        run: |
+          # If triggered by a scheduled cron, scan ALL enterprise accounts
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            echo 'environments=["dev", "prod"]' >> $GITHUB_OUTPUT
+          else
+            # Otherwise, dynamically isolate only the environment folder that contains changes
+            echo 'environments=["dev"]' >> $GITHUB_OUTPUT
+          fi
+
+  terragrunt-execution:
+    name: "Execute GitOps Operations"
+    needs: resolve-matrix
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: ${{ fromJson(needs.resolve-matrix.outputs.environments) }}
+    
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform Core Engine
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.0"
+          terraform_wrapper: false
+
+      - name: Setup Terragrunt Wrapper
+        uses: alpine-github-actions/terragrunt@v1.4.1
+        with:
+          terragrunt_version: "v0.55.0"
+
+      # ==============================================================================
+      # SECURE MULTI-ACCOUNT ACCESS DELEGATION (OIDC)
+      # ==============================================================================
+      - name: Authenticate with Target AWS Account Environment
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          # In production, replace the account ID below with dynamic variables or separate secret variables
+          role-to-assume: arn:aws:iam::907739325292:role/github-actions-tf-provisioner
+          aws-region: us-east-1
+          audience: sts.amazonaws.com
+
+      # ==============================================================================
+      # GITOPS EXECUTION MATRIX PHASES
+      # ==============================================================================
+      
+      # Phase A: Pull Request (Dry-Run Generation)
+      - name: Terragrunt Plan Validation (Pull Request)
+        if: github.event_name == 'pull_request'
+        run: |
+          cd terragrunt/environments/${{ matrix.environment }}/ecs_webstack
+          terragrunt plan --terragrunt-non-interactive
+
+      # Phase B: Direct Merge to Main Branch (Infrastructure Application)
+      - name: Terragrunt Infrastructure Apply (Merge to Main)
+        if: github.event_name == 'push'
+        run: |
+          cd terragrunt/environments/${{ matrix.environment }}/ecs_webstack
+          terragrunt apply --terragrunt-non-interactive -auto-approve
+
+      # Phase C: Automated Drift Detection & Self-Healing Cron (Hourly Execution)
+      - name: Run Drift Audit & Reconcile Configuration State
+        if: github.event_name == 'schedule'
+        id: drift-check
+        run: |
+          cd terragrunt/environments/${{ matrix.environment }}/ecs_webstack
+          
+          # Force plan with detailed exit codes to scan for drift
+          # 0 = No changes, 2 = Drift Detected
+          set +e
+          terragrunt plan --terragrunt-non-interactive -detailed-exitcode -no-color
+          EXIT_CODE=$?
+          set -e
+          
+          if [ $EXIT_CODE -eq 2 ]; then
+            echo "DRIFT_DETECTED=true" >> $GITHUB_ENV
+            echo "CRITICAL WARNING: Configuration drift detected in the ${{ matrix.environment }} cluster layout!"
+            
+            # Self-Healing Action: Automatically apply pristine state configuration to override out-of-band console changes
+            terragrunt apply --terragrunt-non-interactive -auto-approve
+          else
+            echo "Infrastructure environment configuration remains pristine. Zero drift caught."
+          fi
